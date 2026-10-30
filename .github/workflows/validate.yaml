@@ -19,6 +19,8 @@ jobs:
         with:
           title: ${{ github.event.pull_request.title }}
       - run: echo "status=${{ steps.title.outputs.status }}"
+      - if: steps.title.outputs.status == 'error'
+        run: exit 1
 
   publishable-and-version:
     if: github.event_name == 'push'
