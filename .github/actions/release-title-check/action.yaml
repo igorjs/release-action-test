@@ -1,0 +1,57 @@
+name: "release title check"
+description: >
+  Validate a pull request title against Conventional Commits, strictly, including a
+  known-type allow-list. This is the enforcement half of computing a release version
+  from commit history: a PR that cannot merge with a non-conventional title cannot
+  reach main with one either, so the version step downstream never has to decide what
+  an unrecognised type means.
+
+  Writes $RUNNER_TEMP/cmd.txt and $RUNNER_TEMP/check.txt, the same convention
+  platform/.baseline's prcheck-run and prcheck-record use, so this can be recorded
+  the same way inside a check group that also runs other tools.
+
+inputs:
+  title:
+    description: "The pull request title to validate"
+    required: true
+  known_types:
+    description: "Comma-separated allow-list of Conventional Commits types"
+    required: false
+    default: "feat,fix,perf,refactor,chore,docs,style,test,build,ci,revert"
+
+outputs:
+  status:
+    description: "error or success"
+    value: ${{ steps.check.outputs.status }}
+
+runs:
+  using: composite
+  steps:
+    - id: check
+      shell: bash
+      env:
+        TITLE: ${{ inputs.title }}
+        KNOWN_TYPES: ${{ inputs.known_types }}
+        SCRIPT: ${{ github.action_path }}/validate_title.py
+      run: |
+        set -uo pipefail
+        # Same reason prcheck-conventions and prcheck-run do this: a composite bash step
+        # runs under errexit, and a non-conventional title is a finding to report, not a
+        # crash to propagate.
+        set +e
+
+        printf '%s\n' "Conventional Commits title check" > "$RUNNER_TEMP/cmd.txt"
+
+        python3 "$SCRIPT" --title "$TITLE" --known-types "$KNOWN_TYPES" \
+          > "$RUNNER_TEMP/check.txt" 2>&1
+        rc=$?
+
+        cat "$RUNNER_TEMP/check.txt"
+
+        if [ "$rc" -eq 0 ]; then
+          echo "status=success" >> "$GITHUB_OUTPUT"
+        else
+          echo "::error::$(cat "$RUNNER_TEMP/check.txt")"
+          echo "status=error" >> "$GITHUB_OUTPUT"
+        fi
+        exit 0

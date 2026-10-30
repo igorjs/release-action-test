@@ -1,0 +1,70 @@
+name: "release publishable"
+description: >
+  Decide whether a push to the default branch changed anything that should trigger a
+  release, against a config file the consuming repo owns, rather than a hardcoded path
+  regex in a shared workflow (platform/cicd-templates' atlas-tag.yaml has
+  UNPUBLISHABLE_PATHS for this, which a repo cannot extend without editing the shared
+  workflow).
+
+  Resolves the changed files from the GitHub compare API the same way
+  platform/.baseline's prcheck-diff does, rather than a local git diff, so this needs no
+  deep checkout.
+
+inputs:
+  token:
+    description: "Token with repo read access, used to call the compare API"
+    required: true
+  base_sha:
+    description: "SHA before the push"
+    required: true
+  head_sha:
+    description: "SHA after the push"
+    required: true
+  ignore_config:
+    description: >
+      Path to a JSON file the consuming repo owns, shaped {"ignore": ["**/*.md", ...]}.
+      Falls back to a built-in default when the path does not exist.
+    required: false
+    default: ".github/release-ignore.json"
+
+outputs:
+  should_release:
+    description: "true when at least one changed path is not covered by the ignore list"
+    value: ${{ steps.check.outputs.should_release }}
+  status:
+    description: "error or success"
+    value: ${{ steps.check.outputs.status }}
+
+runs:
+  using: composite
+  steps:
+    - id: check
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        BASE_SHA: ${{ inputs.base_sha }}
+        HEAD_SHA: ${{ inputs.head_sha }}
+        IGNORE_CONFIG: ${{ inputs.ignore_config }}
+        SCRIPT: ${{ github.action_path }}/is_publishable.py
+      run: |
+        set -uo pipefail
+        set +e
+
+        printf '%s\n' "Publishable-path check ($BASE_SHA..$HEAD_SHA)" > "$RUNNER_TEMP/cmd.txt"
+
+        python3 "$SCRIPT" --base "$BASE_SHA" --head "$HEAD_SHA" \
+          --ignore-config "$IGNORE_CONFIG" > "$RUNNER_TEMP/check.txt" 2>&1
+        rc=$?
+
+        cat "$RUNNER_TEMP/check.txt"
+
+        if [ "$rc" -eq 0 ]; then
+          should_release=$(grep -o 'should_release=[a-z]*' "$RUNNER_TEMP/check.txt" | tail -1 | cut -d= -f2)
+          echo "should_release=${should_release:-false}" >> "$GITHUB_OUTPUT"
+          echo "status=success" >> "$GITHUB_OUTPUT"
+        else
+          echo "::error::$(tail -1 "$RUNNER_TEMP/check.txt")"
+          echo "should_release=false" >> "$GITHUB_OUTPUT"
+          echo "status=error" >> "$GITHUB_OUTPUT"
+        fi
+        exit 0

@@ -1,0 +1,61 @@
+name: "release version"
+description: >
+  Compute the next semantic version from Conventional Commits since the last matching
+  tag: a breaking-change marker or a '!' bumps major, 'feat' bumps minor, 'fix' and
+  'perf' bump patch, anything else (chore, docs, style, test, build, ci, refactor) is
+  no release on its own. Replaces hand-editing package.json's version field and
+  replaces github.run_number as the patch source (the bug behind
+  platform/cicd-templates#131 and platform/atlas-cicd-templates#132: run_number never
+  resets on a new minor or major).
+
+inputs:
+  token:
+    description: "Token with repo read access, used to list tags and commits"
+    required: true
+  tag_prefix:
+    description: "Prefix tags carry before the version, e.g. 'v'"
+    required: false
+    default: "v"
+
+outputs:
+  version:
+    description: "The computed next version, e.g. 2.3.0"
+    value: ${{ steps.compute.outputs.version }}
+  tag:
+    description: "The computed next version with tag_prefix, e.g. v2.3.0"
+    value: ${{ steps.compute.outputs.tag }}
+  bump:
+    description: "major, minor, patch or none"
+    value: ${{ steps.compute.outputs.bump }}
+  status:
+    description: "error or success"
+    value: ${{ steps.compute.outputs.status }}
+
+runs:
+  using: composite
+  steps:
+    - id: compute
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        TAG_PREFIX: ${{ inputs.tag_prefix }}
+        SCRIPT: ${{ github.action_path }}/compute_version.py
+      run: |
+        set -uo pipefail
+        set +e
+
+        printf '%s\n' "Conventional Commits version computation" > "$RUNNER_TEMP/cmd.txt"
+
+        python3 "$SCRIPT" --tag-prefix "$TAG_PREFIX" --github-output "$GITHUB_OUTPUT" \
+          > "$RUNNER_TEMP/check.txt" 2>&1
+        rc=$?
+
+        cat "$RUNNER_TEMP/check.txt"
+
+        if [ "$rc" -eq 0 ]; then
+          echo "status=success" >> "$GITHUB_OUTPUT"
+        else
+          echo "::error::$(tail -1 "$RUNNER_TEMP/check.txt")"
+          echo "status=error" >> "$GITHUB_OUTPUT"
+        fi
+        exit 0
